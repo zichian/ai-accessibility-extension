@@ -6,10 +6,9 @@ export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
 }
 
-// At the very top of ai-navigation.tsx
 const GEMINI_API_KEY = process.env.PLASMO_PUBLIC_GEMINI_API_KEY
 
-// --- 1. STYLES (Updated for Chat UI) ---
+// --- 1. STYLES ---
 export const getStyle = () => {
   const style = document.createElement("style")
   style.textContent = `
@@ -19,7 +18,10 @@ export const getStyle = () => {
       display: flex; flex-direction: column; gap: 10px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
       z-index: 2147483647; font-family: -apple-system, BlinkMacSystemFont, sans-serif; 
       border: 1px solid #333; transition: all 0.3s ease; max-width: 400px; width: max-content;
+      animation: popUp 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.275);
     }
+    @keyframes popUp { from { transform: translateX(-50%) translateY(100px); opacity: 0; } to { transform: translateX(-50%) translateY(0); opacity: 1; } }
+    
     .wf-row { display: flex; align-items: center; gap: 8px; width: 100%; }
     .wayfinder-btn {
       background: #333; color: #eee; border: 1px solid #444; padding: 6px 12px;
@@ -34,7 +36,6 @@ export const getStyle = () => {
     }
     .wayfinder-input:focus { background: #333; }
     
-    /* Chat Bubble Styles */
     .wf-chat-area {
       max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px;
       padding-bottom: 8px; border-bottom: 1px solid #333; margin-bottom: 5px;
@@ -54,26 +55,7 @@ export const getStyle = () => {
   return style
 }
 
-// --- 2. HELPERS (Spotlight + Screenshot) ---
-
-const captureScreen = async (): Promise<string | null> => {
-  return new Promise((resolve) => {
-    try {
-      chrome.runtime.sendMessage({ action: "CAPTURE_VISIBLE_TAB" }, (response) => {
-        if (response && response.dataUrl) {
-          // Remove the "data:image/jpeg;base64," prefix for the API
-          resolve(response.dataUrl.split(",")[1])
-        } else {
-          resolve(null)
-        }
-      })
-    } catch (e) {
-      console.error("Screenshot failed", e)
-      resolve(null)
-    }
-  })
-}
-
+// --- 2. HELPERS ---
 const createSpotlight = (target: HTMLElement) => {
     document.querySelectorAll(".ai-spotlight").forEach(el => el.remove())
     target.scrollIntoView({ behavior: "smooth", block: "center" })
@@ -97,26 +79,20 @@ const createSpotlight = (target: HTMLElement) => {
 
 // --- 3. MAIN COMPONENT ---
 const AiNavigation = () => {
+  // NEW: State to control visibility via the Event Listener
+  const [isActive, setIsActive] = useState(false)
+
   const [suggestions, setSuggestions] = useState<DetectedElement[]>([])
   const [query, setQuery] = useState("")
   const [loading, setLoading] = useState(false)
-  
-  // Chat State
   const [chatHistory, setChatHistory] = useState<{role: 'user'|'ai', text: string}[]>([])
   const [expandChat, setExpandChat] = useState(false)
-
-  // Session History (Last 3 actions)
   const actionHistory = useRef<string[]>([])
 
-  // --- LOGIC: Static Scanner ---
   const scanPage = () => {
     const matches = runAllDetectors()
     const visible = matches.filter(m => m.element.getBoundingClientRect().width > 0)
     setSuggestions(visible.slice(0, 4))
-  }
-
-  const addToHistory = (action: string) => {
-      actionHistory.current = [action, ...actionHistory.current].slice(0, 3)
   }
 
   const inferGoal = (query: string) => {
@@ -130,86 +106,66 @@ const AiNavigation = () => {
     return "help"
   }
 
-
-  // --- LOGIC: The Smart Multimodal AI ---
   const askGemini = async (userPrompt: string) => {
-  if (!GEMINI_API_KEY) {
-    alert("Missing API Key")
-    return
+    if (!GEMINI_API_KEY) { alert("Missing API Key"); return }
+
+    setLoading(true)
+    setExpandChat(true)
+    setChatHistory(prev => [...prev, { role: "user", text: userPrompt }])
+
+    const targetCategory = inferGoal(userPrompt)
+    const target = suggestions.find(s => s.category === targetCategory)
+
+    if (target) createSpotlight(target.element)
+
+    try {
+      const res = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: `User wants to: "${userPrompt}". I highlighted the "${target?.label || "Help"}" button. Explain in ONE short sentence why.` }] }]
+          })
+        }
+      )
+      const data = await res.json()
+      const aiText = data?.candidates?.[0]?.content?.parts?.[0]?.text || "I highlighted the best place to start."
+      setChatHistory(prev => [...prev, { role: "ai", text: aiText }])
+    } catch (e) {
+      setChatHistory(prev => [...prev, { role: "ai", text: "I highlighted the best place to start." }])
+    }
+    setLoading(false)
   }
 
-  setLoading(true)
-  setExpandChat(true)
-  setChatHistory(prev => [...prev, { role: "user", text: userPrompt }])
-
-  // 1. Infer intent
-  const targetCategory = inferGoal(userPrompt)
-
-  // 2. Pick best detected element
-  const target = suggestions.find(s => s.category === targetCategory)
-
-  // 3. If found → spotlight immediately
-  if (target) {
-    createSpotlight(target.element)
-  }
-
-  try {
-    // 4. Ask AI to EXPLAIN (not decide)
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [{
-            parts: [{
-              text: `
-User wants to: "${userPrompt}"
-
-I highlighted the "${target?.label || "Help"}" button.
-
-Explain in ONE short sentence why this is the next step.
-Keep it simple and reassuring.
-`
-            }]
-          }]
-        })
-      }
-    )
-
-    const data = await res.json()
-    const aiText =
-      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
-      "I highlighted the best place to start."
-
-    setChatHistory(prev => [...prev, { role: "ai", text: aiText }])
-
-  } catch (e) {
-    setChatHistory(prev => [
-      ...prev,
-      { role: "ai", text: "I highlighted the best place to start." }
-    ])
-  }
-
-  setLoading(false)
-}
-
-
-  // Handle clicking a suggestion button
   const handleBtnClick = (s: DetectedElement) => {
       createSpotlight(s.element)
-      addToHistory(s.label) // Remember this action
+      actionHistory.current = [s.label, ...actionHistory.current].slice(0, 3)
   }
 
+  // --- NEW: Event Listener & Activation Logic ---
   useEffect(() => {
-    document.head.appendChild(getStyle())
-    setTimeout(scanPage, 500)
+    const activationHandler = () => {
+      setIsActive(true)
+      // Only inject styles and scan once activated to save resources
+      if (!document.getElementById('wf-styles')) {
+        const styleEl = getStyle()
+        styleEl.id = 'wf-styles'
+        document.head.appendChild(styleEl)
+      }
+      // Delay slightly to allow animation
+      setTimeout(scanPage, 100)
+    }
+
+    window.addEventListener("plasmo-trigger-assist", activationHandler)
+    return () => window.removeEventListener("plasmo-trigger-assist", activationHandler)
   }, [])
+
+  // Do not render anything until activated
+  if (!isActive) return null
 
   return (
     <div className="wayfinder-bar">
-      
-      {/* 1. Chat Area (Expands when talking) */}
       {expandChat && (
           <div className="wf-chat-area">
               {chatHistory.map((msg, i) => (
@@ -219,15 +175,12 @@ Keep it simple and reassuring.
           </div>
       )}
 
-      {/* 2. Quick Actions Row */}
       <div className="wf-row">
         {!loading && suggestions.map((s, i) => (
             <button key={i} className="wayfinder-btn primary" onClick={() => handleBtnClick(s)}>
             {s.label}
             </button>
         ))}
-        
-        {/* The "What now?" Magic Button */}
         {suggestions.length === 0 && !loading && (
              <button className="wayfinder-btn" onClick={() => askGemini("What should I do next?")}>
                  What next? 🤷‍♂️
@@ -235,7 +188,6 @@ Keep it simple and reassuring.
         )}
       </div>
 
-      {/* 3. In`put Row */}
       <div className="wf-row">
         <input 
             className="wayfinder-input" 
@@ -243,10 +195,9 @@ Keep it simple and reassuring.
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => e.key === "Enter" && askGemini(query)}
+            autoFocus
         />
-        {expandChat && (
-            <button className="wayfinder-btn" onClick={() => setExpandChat(false)}>Close</button>
-        )}
+        <button className="wayfinder-btn" onClick={() => setIsActive(false)}>Close</button>
       </div>
     </div>
   )
