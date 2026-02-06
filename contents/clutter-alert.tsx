@@ -124,9 +124,9 @@ const ClutterAlert = () => {
         </div>
       </div>
 
-      <button className="clutter-btn-primary" onClick={() => alert("Connecting to AI Agent...")}>
+      {/* <button className="clutter-btn-primary" onClick={() => alert("Connecting to AI Agent...")}>
         Simplify Interface
-      </button>
+      </button> */}
       
       <div className="clutter-dismiss" onClick={() => setIsVisible(false)}>
         Dismiss for this site
