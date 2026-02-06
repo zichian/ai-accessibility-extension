@@ -222,7 +222,7 @@ const AiNavigation = () => {
         )}
       </div>
 
-      {/* 3. Input Row */}
+      {/* 3. In`put Row */}
       <div className="wf-row">
         <input 
             className="wayfinder-input" 
