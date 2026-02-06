@@ -1,35 +1,28 @@
 import type { PlasmoCSConfig } from "plasmo"
 import { useEffect, useState } from "react"
 
-// 1. Run on all websites
 export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
 }
 
-// 2. Define the data structure
+// --- LOGIC & STYLES ---
+
+// 1. Data Structure
 interface ClutterStats {
   score: number
   details: { wordCount: number; interactiveCount: number }
 }
 
-// 3. Inject the "Real" Design (Professional Look)
+// 2. Styles
 export const getStyle = () => {
   const style = document.createElement("style")
   style.textContent = `
     .clutter-alert-box {
-      position: fixed;
-      bottom: 30px;
-      right: 30px;
-      background: #ffffff;
-      color: #1a1a1a;
-      padding: 24px;
-      border-radius: 16px;
-      box-shadow: 0 12px 40px rgba(0,0,0,0.15);
-      z-index: 2147483647;
-      width: 340px;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-      border: 1px solid #e0e0e0;
-      animation: slideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
+      position: fixed; bottom: 30px; right: 30px; background: #ffffff;
+      color: #1a1a1a; padding: 24px; border-radius: 16px;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.15); z-index: 2147483646;
+      width: 340px; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      border: 1px solid #e0e0e0; animation: slideIn 0.6s cubic-bezier(0.16, 1, 0.3, 1);
     }
     .clutter-header { display: flex; align-items: center; gap: 12px; margin-bottom: 12px; }
     .clutter-icon { font-size: 24px; }
@@ -62,7 +55,7 @@ export const getStyle = () => {
   return style
 }
 
-// --- LOGIC ---
+// 3. Analysis Logic
 const analyzeClutter = (): ClutterStats => {
   if (typeof document === "undefined") {
     return { score: 0, details: { wordCount: 0, interactiveCount: 0 } }
@@ -73,7 +66,6 @@ const analyzeClutter = (): ClutterStats => {
   const interactiveCount = document.querySelectorAll("a, button, input").length
   const mediaCount = document.querySelectorAll("img, video, iframe").length
 
-  // The Score Formula
   const score = (wordCount * 0.05) + (interactiveCount * 1.5) + (mediaCount * 2)
 
   return { score, details: { wordCount, interactiveCount } }
@@ -84,14 +76,12 @@ const ClutterAlert = () => {
   const [stats, setStats] = useState<ClutterStats>({ score: 0, details: { wordCount: 0, interactiveCount: 0 } })
 
   useEffect(() => {
-    // Wait 1.5s for page to fully render before judging it
+    document.head.appendChild(getStyle())
+    
     const timer = setTimeout(() => {
       const result = analyzeClutter()
       setStats(result)
-      
-      // *** THE THRESHOLD ***
-      // If score is 352, this will be FALSE (Box hidden).
-      // If score is 1200 (Amazon/CNN), this will be TRUE (Box shows).
+      // Threshold check
       if (result.score > 800) { 
         setIsVisible(true)
       }
@@ -99,6 +89,12 @@ const ClutterAlert = () => {
 
     return () => clearTimeout(timer)
   }, [])
+
+  // HANDLER: Triggers the switch
+  const handleAssistClick = () => {
+    setIsVisible(false) // 1. Close self
+    window.dispatchEvent(new CustomEvent("plasmo-trigger-assist")) // 2. Wake up neighbor
+  }
 
   if (!isVisible) return null
 
@@ -124,8 +120,8 @@ const ClutterAlert = () => {
         </div>
       </div>
 
-      <button className="clutter-btn-primary" onClick={() => alert("Connecting to AI Agent...")}>
-        Simplify Interface
+      <button className="clutter-btn-primary" onClick={handleAssistClick}>
+        Assist mode
       </button>
       
       <div className="clutter-dismiss" onClick={() => setIsVisible(false)}>
