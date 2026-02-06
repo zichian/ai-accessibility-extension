@@ -27,20 +27,40 @@ export type DetectedElement = {
   // --- 1. DETECTORS ---
   
   export const detectCart = (): DetectedElement[] => {
-    const results = new Map<HTMLElement, DetectedElement>();
+    const results = new Map<HTMLElement, DetectedElement>()
+  
     const add = (el: HTMLElement, score: number) => {
-      if (!results.has(el)) results.set(el, { element: el, label: "View Cart", category: "cart", score });
-    };
-    // High Confidence
-    findElements('[aria-label*="cart" i], [aria-label*="basket" i], .nav-cart-icon').forEach(el => add(el, 100));
-    findElements('a[href*="/cart"], a[href*="/basket"]').forEach(el => add(el, 80));
-    // Text
-    findElements('a, button').forEach(el => {
-      const text = getVisibleText(el);
-      if (matches(text, /\b(cart|basket|bag)\b/)) add(el, 90);
-    });
-    return Array.from(results.values());
-  };
+      if (!results.has(el)) {
+        results.set(el, {
+          element: el,
+          label: "View Cart",
+          category: "cart",
+          score
+        })
+      }
+    }
+  
+    // 1️⃣ Amazon specific (this is THE key)
+    const amazonCart = document.getElementById("nav-cart")
+    if (amazonCart) add(amazonCart, 1000)
+  
+    // 2️⃣ Any element containing nav-cart
+    document.querySelectorAll("[id*='cart']").forEach(el =>
+      add(el as HTMLElement, 200)
+    )
+  
+    // 3️⃣ Header anchors with cart role
+    document.querySelectorAll("header a").forEach(el => {
+      const aria = el.getAttribute("aria-label")?.toLowerCase() || ""
+      const href = (el as HTMLAnchorElement).href || ""
+  
+      if (aria.includes("cart") || href.includes("cart")) {
+        add(el as HTMLElement, 150)
+      }
+    })
+  
+    return Array.from(results.values())
+  }
   
   export const detectSearch = (): DetectedElement[] => {
     const results = new Map<HTMLElement, DetectedElement>();
