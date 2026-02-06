@@ -6,6 +6,7 @@ export const config: PlasmoCSConfig = {
   matches: ["<all_urls>"]
 }
 
+// At the very top of ai-navigation.tsx
 const GEMINI_API_KEY = process.env.PLASMO_PUBLIC_GEMINI_API_KEY
 
 // --- 1. STYLES (Updated for Chat UI) ---
@@ -118,69 +119,81 @@ const AiNavigation = () => {
       actionHistory.current = [action, ...actionHistory.current].slice(0, 3)
   }
 
+  const inferGoal = (query: string) => {
+    const q = query.toLowerCase()
+    if (q.includes("return") || q.includes("refund")) return "help"
+    if (q.includes("track")) return "help"
+    if (q.includes("cart")) return "cart"
+    if (q.includes("checkout") || q.includes("pay")) return "checkout"
+    if (q.includes("search") || q.includes("find")) return "search"
+    if (q.includes("login") || q.includes("sign")) return "login"
+    return "help"
+  }
+
+
   // --- LOGIC: The Smart Multimodal AI ---
   const askGemini = async (userPrompt: string) => {
-    if (!GEMINI_API_KEY) return alert("Missing API Key")
-    
-    setLoading(true)
-    setExpandChat(true)
-    setChatHistory(prev => [...prev, { role: 'user', text: userPrompt }])
-
-    try {
-      // 1. Capture Context
-      const screenshotBase64 = await captureScreen()
-      const domSummary = suggestions.map(s => `${s.label} (${s.category})`).join(", ")
-      const userHistoryStr = actionHistory.current.join(" -> ")
-
-      // 2. Build Request
-      const requestBody: any = {
-        contents: [{
-          parts: [
-            { text: `
-              You are a web navigation assistant. 
-              User History (Last actions): ${userHistoryStr || "None"}.
-              Buttons detected on screen: ${domSummary}.
-              
-              User asks: "${userPrompt}"
-              
-              Task:
-              1. Look at the screenshot to understand the page state (e.g., is the cart empty? is there a login error?).
-              2. Based on the User History, suggest the logical NEXT step.
-              3. If you mention a specific button, wrap it in brackets like [Button Name].
-              4. Keep it short (max 2 sentences).
-            `},
-            // Add Image if available
-            screenshotBase64 ? { inlineData: { mimeType: "image/jpeg", data: screenshotBase64 } } : { text: "(Screenshot unavailable)" }
-          ]
-        }]
-      }
-
-      // 3. Call API
-      const res = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(requestBody)
-      })
-
-      const data = await res.json()
-      const aiResponse = data.candidates?.[0]?.content?.parts?.[0]?.text || "I'm not sure."
-
-      // 4. Process Response (Find mentions of buttons to highlight)
-      setChatHistory(prev => [...prev, { role: 'ai', text: aiResponse }])
-      
-      // If AI mentions [Cart], try to highlight it
-      const match = aiResponse.match(/\[(.*?)\]/)
-      if (match) {
-          const btnName = match[1].toLowerCase()
-          const target = suggestions.find(s => s.label.toLowerCase().includes(btnName))
-          if (target) createSpotlight(target.element)
-      }
-
-    } catch (e) {
-      console.error(e)
-      setChatHistory(prev => [...prev, { role: 'ai', text: "Error connecting to AI." }])
-    }
-    setLoading(false)
+  if (!GEMINI_API_KEY) {
+    alert("Missing API Key")
+    return
   }
+
+  setLoading(true)
+  setExpandChat(true)
+  setChatHistory(prev => [...prev, { role: "user", text: userPrompt }])
+
+  // 1. Infer intent
+  const targetCategory = inferGoal(userPrompt)
+
+  // 2. Pick best detected element
+  const target = suggestions.find(s => s.category === targetCategory)
+
+  // 3. If found → spotlight immediately
+  if (target) {
+    createSpotlight(target.element)
+  }
+
+  try {
+    // 4. Ask AI to EXPLAIN (not decide)
+    const res = await fetch(
+      `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${GEMINI_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{
+            parts: [{
+              text: `
+User wants to: "${userPrompt}"
+
+I highlighted the "${target?.label || "Help"}" button.
+
+Explain in ONE short sentence why this is the next step.
+Keep it simple and reassuring.
+`
+            }]
+          }]
+        })
+      }
+    )
+
+    const data = await res.json()
+    const aiText =
+      data?.candidates?.[0]?.content?.parts?.[0]?.text ||
+      "I highlighted the best place to start."
+
+    setChatHistory(prev => [...prev, { role: "ai", text: aiText }])
+
+  } catch (e) {
+    setChatHistory(prev => [
+      ...prev,
+      { role: "ai", text: "I highlighted the best place to start." }
+    ])
+  }
+
+  setLoading(false)
+}
+
 
   // Handle clicking a suggestion button
   const handleBtnClick = (s: DetectedElement) => {
